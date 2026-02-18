@@ -51,13 +51,29 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--dtype", type=str, default="float64", choices=["float64", "float32"])
 
         # Optional diagnostics
-        sp.add_argument("--log-density", action="store_true", help="Log density/curvature/substeps and modulate trajectories with curvature.")
-        sp.add_argument("--fixed-substeps", type=int, default=1, help="Force a fixed number of substeps per tick (>=1). Use 1 for normal.")
+        sp.add_argument(
+            "--log-density",
+            action="store_true",
+            help="Log density/curvature/substeps and modulate trajectories with curvature.",
+        )
+        sp.add_argument(
+            "--fixed-substeps",
+            type=int,
+            default=1,
+            help="Force a fixed number of substeps per tick (>=1). Use 1 for normal mode.",
+        )
+        sp.add_argument("--base-density", type=float, default=1.0)
+        sp.add_argument("--pulse-density-boost", type=float, default=5.0)
+        sp.add_argument("--activity-density-gain", type=float, default=0.10)
+        sp.add_argument("--curvature-gain", type=float, default=2.0)
+        sp.add_argument("--fr-power", type=float, default=0.37)
+        sp.add_argument("--fr-max", type=int, default=6)
 
     # multi-seed
     ms = sub.add_parser("multi-seed", help="Run baseline multi-seed experiment and plot results.")
     add_shared_args(ms)
     ms.add_argument("--n-seeds", type=int, default=10, help="Number of independent runs (seeds)")
+
     ms.add_argument("--traj-gain", type=float, default=0.15, help="Base gain factor for PLV-modulated thrust")
     ms.add_argument("--traj-dt", type=float, default=0.01, help="Time step for trajectory integration")
     ms.add_argument("--traj-min-plv", type=float, default=0.4, help="Minimum PLV threshold for thrust application")
@@ -87,12 +103,17 @@ def cfg_from_args(args: argparse.Namespace) -> ReservoirConfig:
         persistent_noise_sigma=args.persistent_noise_sigma,
         dm_boost_steps=args.dm_boost_steps,
         dm_boost_factor=args.dm_boost_factor,
+        seed=42,
         dtype=args.dtype,
-        seed=42,  # overwritten per seed in multi-run functions
-
         # diagnostics
-        log_density=bool(args.log_density),
-        fixed_substeps=int(max(1, args.fixed_substeps)),
+        log_density=args.log_density,
+        fixed_substeps=args.fixed_substeps,
+        base_density=args.base_density,
+        pulse_density_boost=args.pulse_density_boost,
+        activity_density_gain=args.activity_density_gain,
+        curvature_gain=args.curvature_gain,
+        fr_power=args.fr_power,
+        fr_max=args.fr_max,
     )
 
 
@@ -124,11 +145,11 @@ def main() -> None:
             all_phi=all_phi,
             all_plv=all_plv,
             all_corr=all_corr,
-            all_curvature=all_curv,
             n_steps=args.n_steps,
             base_gain=args.traj_gain,
             dt=args.traj_dt,
             min_plv_thr=args.traj_min_plv,
+            all_curvature=all_curv,
             title=f"PilotWeave-RC multi-seed ({args.n_seeds} runs)",
             save_path=save_path,
         )
@@ -156,9 +177,7 @@ def main() -> None:
             save_path=save_path,
         )
 
-        # optional extra console summary
         print_ablation_summary(summary)
-
     else:
         raise RuntimeError(f"Unknown command: {args.cmd}")
 
