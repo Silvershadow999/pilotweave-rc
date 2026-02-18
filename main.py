@@ -2,36 +2,32 @@ from __future__ import annotations
 
 import argparse
 
-from gewebe_reservoir import ReservoirConfig, run_multi_seed, run_ablation_multiseed
-from plots import plot_multi_seed_results, plot_ablation_overview, print_ablation_summary
+from gewebe_reservoir import ReservoirConfig, run_ablation_multiseed, run_multi_seed
+from plots import plot_ablation_overview, plot_multi_seed_results, print_ablation_summary
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="pilotweave-rc",
-        description="PilotWeave-RC: SciPy-free physical reservoir computing simulation using cosmic ray pulses and fuzzy DM surrogate waves.",
+        description=(
+            "PilotWeave-RC: SciPy-free physical reservoir computing simulation using "
+            "sparse event pulses and a fuzzy-DM surrogate wave."
+        ),
     )
     p.add_argument("--version", action="version", version="pilotweave-rc 0.1.0")
 
-    sub = p.add_subparsers(dest="cmd", required=True, help="Available commands")
+    sub = p.add_subparsers(dest="cmd", required=True, help="Commands")
 
     def add_shared_args(sp: argparse.ArgumentParser) -> None:
+        # Experiment settings
         sp.add_argument("--n-steps", type=int, default=3300, help="Number of simulation steps")
         sp.add_argument("--fs", type=float, default=1000.0, help="Sampling frequency (Hz)")
         sp.add_argument("--window", type=int, default=400, help="Rolling window size for corr/PLV")
-        sp.add_argument("--p-pulse", type=float, default=0.04, help="Probability of cosmic ray pulse")
+        sp.add_argument("--p-pulse", type=float, default=0.04, help="Pulse probability per step")
         sp.add_argument("--pulse-sigma", type=float, default=0.12, help="Std dev of pulse amplitude")
         sp.add_argument("--no-persistent-noise", action="store_true", help="Disable persistent background noise")
         sp.add_argument("--no-detrend-plv", action="store_true", help="Disable detrending for PLV calculation")
         sp.add_argument("--seed-base", type=int, default=1234, help="Base seed for multi-seed runs")
-
-        # Plot output (headless-friendly)
-        sp.add_argument(
-            "--save-plot",
-            type=str,
-            default="",
-            help="If set, save plot to this PNG path instead of opening a window.",
-        )
 
         # Model config overrides
         sp.add_argument("--n-nodes", type=int, default=300)
@@ -50,36 +46,21 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--dm-boost-factor", type=float, default=2.0)
         sp.add_argument("--dtype", type=str, default="float64", choices=["float64", "float32"])
 
-        # Optional diagnostics
-        sp.add_argument(
-            "--log-density",
-            action="store_true",
-            help="Log density/curvature/substeps and modulate trajectories with curvature.",
-        )
-        sp.add_argument(
-            "--fixed-substeps",
-            type=int,
-            default=1,
-            help="Force a fixed number of substeps per tick (>=1). Use 1 for normal mode.",
-        )
-        sp.add_argument("--base-density", type=float, default=1.0)
-        sp.add_argument("--pulse-density-boost", type=float, default=5.0)
-        sp.add_argument("--activity-density-gain", type=float, default=0.10)
-        sp.add_argument("--curvature-gain", type=float, default=2.0)
-        sp.add_argument("--fr-power", type=float, default=0.37)
-        sp.add_argument("--fr-max", type=int, default=6)
+        # Optional: save plots
+        sp.add_argument("--save-plot", type=str, default="", help="If set, save plot to this path (png)")
 
     # multi-seed
     ms = sub.add_parser("multi-seed", help="Run baseline multi-seed experiment and plot results.")
     add_shared_args(ms)
     ms.add_argument("--n-seeds", type=int, default=10, help="Number of independent runs (seeds)")
 
+    # Trajectory parameters (only for multi-seed)
     ms.add_argument("--traj-gain", type=float, default=0.15, help="Base gain factor for PLV-modulated thrust")
     ms.add_argument("--traj-dt", type=float, default=0.01, help="Time step for trajectory integration")
     ms.add_argument("--traj-min-plv", type=float, default=0.4, help="Minimum PLV threshold for thrust application")
 
     # ablation
-    ab = sub.add_parser("ablation", help="Run five-condition ablation multi-seed and show overview.")
+    ab = sub.add_parser("ablation", help="Run five-condition ablation study (multi-seed).")
     add_shared_args(ab)
     ab.add_argument("--n-seeds", type=int, default=20, help="Number of independent runs per condition")
     ab.add_argument("--tail-len", type=int, default=600, help="Number of tail steps for statistics")
@@ -103,17 +84,8 @@ def cfg_from_args(args: argparse.Namespace) -> ReservoirConfig:
         persistent_noise_sigma=args.persistent_noise_sigma,
         dm_boost_steps=args.dm_boost_steps,
         dm_boost_factor=args.dm_boost_factor,
-        seed=42,
         dtype=args.dtype,
-        # diagnostics
-        log_density=args.log_density,
-        fixed_substeps=args.fixed_substeps,
-        base_density=args.base_density,
-        pulse_density_boost=args.pulse_density_boost,
-        activity_density_gain=args.activity_density_gain,
-        curvature_gain=args.curvature_gain,
-        fr_power=args.fr_power,
-        fr_max=args.fr_max,
+        seed=42,  # overwritten per seed in multi-run
     )
 
 
@@ -124,10 +96,9 @@ def main() -> None:
     cfg = cfg_from_args(args)
     persistent_noise = not args.no_persistent_noise
     detrend_plv = not args.no_detrend_plv
-    save_path = args.save_plot.strip() or None
 
     if args.cmd == "multi-seed":
-        all_y, all_phi, all_plv, all_corr, all_curv = run_multi_seed(
+        all_y, all_phi, all_plv, all_corr = run_multi_seed(
             base_cfg=cfg,
             n_seeds=args.n_seeds,
             seed_base=args.seed_base,
@@ -149,9 +120,8 @@ def main() -> None:
             base_gain=args.traj_gain,
             dt=args.traj_dt,
             min_plv_thr=args.traj_min_plv,
-            all_curvature=all_curv,
             title=f"PilotWeave-RC multi-seed ({args.n_seeds} runs)",
-            save_path=save_path,
+            save_path=args.save_plot or None,
         )
 
     elif args.cmd == "ablation":
@@ -173,11 +143,11 @@ def main() -> None:
             results=results,
             summary=summary,
             n_steps=args.n_steps,
-            title=f"PilotWeave-RC ablation ({args.n_seeds} seeds / condition)",
-            save_path=save_path,
+            title=f"PilotWeave-RC ablation ({args.n_seeds} seeds/condition)",
+            save_path=args.save_plot or None,
         )
-
         print_ablation_summary(summary)
+
     else:
         raise RuntimeError(f"Unknown command: {args.cmd}")
 
