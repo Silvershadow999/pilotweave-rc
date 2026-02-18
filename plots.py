@@ -1,14 +1,13 @@
----
-
-## 2) plots.py (komplett, inkl. optional Save)
-
-```python
 from __future__ import annotations
 
 from typing import Dict, Optional
 
 import numpy as np
-import matplotlib.pyplot as plt
+import matplotlib
+
+# Headless-safe backend if you run on servers / CI
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 
 from gewebe_reservoir import simulate_plv_modulated_trajectory
 
@@ -22,6 +21,7 @@ def plot_multi_seed_results(
     base_gain: float = 0.15,
     dt: float = 0.01,
     min_plv_thr: float = 0.4,
+    all_curvature: Optional[np.ndarray] = None,
     title: str = "Multi-seed PilotWeave-RC Results",
     figsize: tuple = (15, 10),
     save_path: Optional[str] = None,
@@ -31,9 +31,11 @@ def plot_multi_seed_results(
       - Mean ± std of rolling Pearson correlation
       - Mean ± std of PLV
       - Spaghetti + mean trajectory (PLV-gated)
+    If all_curvature is provided, it modulates thrust.
+    If save_path is provided, saves figure and closes it (headless-safe).
     """
     if n_steps is None:
-        n_steps = int(all_y.shape[1])
+        n_steps = all_y.shape[1]
     t = np.arange(n_steps)
 
     fig = plt.figure(figsize=figsize)
@@ -68,6 +70,10 @@ def plot_multi_seed_results(
     ax3 = fig.add_subplot(grid[1:, :])
     pos_list = []
     for s in range(all_y.shape[0]):
+        curvature = None
+        if all_curvature is not None:
+            curvature = all_curvature[s]
+
         pos = simulate_plv_modulated_trajectory(
             y=all_y[s],
             phi=all_phi[s],
@@ -75,16 +81,16 @@ def plot_multi_seed_results(
             base_gain=base_gain,
             dt=dt,
             min_plv_thr=min_plv_thr,
+            curvature=curvature,
         )
         pos_list.append(pos)
         ax3.plot(pos[:, 0], pos[:, 1], alpha=0.35, lw=1.0)
 
-    pos_list = np.asarray(pos_list, dtype=np.float64)
+    pos_list = np.asarray(pos_list)
     mean_pos = np.mean(pos_list, axis=0)
-
     ax3.plot(mean_pos[:, 0], mean_pos[:, 1], lw=3.0, label="Mean trajectory")
     ax3.plot(mean_pos[0, 0], mean_pos[0, 1], "o", ms=9, label="Start")
-    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=10, label="End")
+    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=11, label="End")
 
     ax3.set_title(f"PLV-gated Trajectories (gain={base_gain}, min PLV thresh={min_plv_thr})")
     ax3.set_xlabel("X position (arbitrary units)")
@@ -96,33 +102,26 @@ def plot_multi_seed_results(
     fig.suptitle(title, fontsize=16, y=0.98)
     plt.tight_layout()
 
-    if save_path is not None:
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    if save_path:
+        plt.savefig(save_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
     else:
         plt.show()
 
-    plt.close(fig)
-
 
 def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
-    """
-    Pretty-print tail statistics from ablation study.
-    """
     order = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
-    print("\n" + "=" * 66)
+    print("\n" + "=" * 64)
     print("Ablation tail summary (last tail_len steps, mean ± std over seeds)")
-    print("-" * 66)
+    print("-" * 64)
     for cond in order:
         s = summary.get(cond, {})
         plv_m = s.get("plv_tail_mean", np.nan)
         plv_s = s.get("plv_tail_std", np.nan)
         corr_m = s.get("corr_tail_mean", np.nan)
         corr_s = s.get("corr_tail_std", np.nan)
-        print(
-            f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | "
-            f"corr: {corr_m:>7.4f} ± {corr_s:<7.4f}"
-        )
-    print("=" * 66 + "\n")
+        print(f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | corr: {corr_m:>7.4f} ± {corr_s:<7.4f}")
+    print("=" * 64 + "\n")
 
 
 def plot_ablation_overview(
@@ -132,13 +131,10 @@ def plot_ablation_overview(
     title: str = "Ablation Study Overview (multi-seed)",
     save_path: Optional[str] = None,
 ) -> None:
-    """
-    Plots mean ± std of corr and PLV for all ablation conditions.
-    """
     conditions = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
     any_cond = conditions[0]
     if n_steps is None:
-        n_steps = int(results[any_cond]["plv"].shape[1])
+        n_steps = results[any_cond]["plv"].shape[1]
     t = np.arange(n_steps)
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
@@ -186,12 +182,10 @@ def plot_ablation_overview(
     fig.suptitle(title, fontsize=16, y=0.98)
     plt.tight_layout()
 
-    if save_path is not None:
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    if save_path:
+        plt.savefig(save_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
     else:
         plt.show()
 
-    plt.close(fig)
-
-    # Print summary table in console
     print_ablation_summary(summary)
