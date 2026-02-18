@@ -13,22 +13,15 @@ def plot_multi_seed_results(
     all_phi: np.ndarray,
     all_plv: np.ndarray,
     all_corr: np.ndarray,
-    all_curvature: Optional[np.ndarray] = None,
     n_steps: Optional[int] = None,
     base_gain: float = 0.15,
     dt: float = 0.01,
     min_plv_thr: float = 0.4,
     title: str = "Multi-seed PilotWeave-RC Results",
     figsize: tuple = (15, 10),
-    save_path: Optional[str] = None,
+    save_plot: Optional[str] = None,
+    all_curvature: Optional[np.ndarray] = None,
 ) -> None:
-    """
-    Visualizes multi-seed results:
-      - Mean ± std of rolling Pearson correlation
-      - Mean ± std of PLV
-      - Trajectories (spaghetti + mean), optionally curvature-modulated
-    If save_path is set: saves PNG and closes figure (headless-friendly).
-    """
     if n_steps is None:
         n_steps = all_y.shape[1]
     t = np.arange(n_steps)
@@ -36,7 +29,6 @@ def plot_multi_seed_results(
     fig = plt.figure(figsize=figsize)
     grid = plt.GridSpec(3, 2, wspace=0.30, hspace=0.40)
 
-    # 1) Rolling correlation (mean ± std)
     ax1 = fig.add_subplot(grid[0, 0])
     mean_corr = np.nanmean(all_corr, axis=0)
     std_corr = np.nanstd(all_corr, axis=0)
@@ -48,7 +40,6 @@ def plot_multi_seed_results(
     ax1.grid(True, alpha=0.25)
     ax1.legend(loc="lower right")
 
-    # 2) PLV (mean ± std)
     ax2 = fig.add_subplot(grid[0, 1])
     mean_plv = np.nanmean(all_plv, axis=0)
     std_plv = np.nanstd(all_plv, axis=0)
@@ -61,13 +52,10 @@ def plot_multi_seed_results(
     ax2.grid(True, alpha=0.25)
     ax2.legend(loc="lower right")
 
-    # 3) Trajectories
     ax3 = fig.add_subplot(grid[1:, :])
     pos_list = []
     for s in range(all_y.shape[0]):
-        curvature = None
-        if all_curvature is not None:
-            curvature = all_curvature[s]
+        curvature = all_curvature[s] if all_curvature is not None else None
         pos = simulate_plv_modulated_trajectory(
             y=all_y[s],
             phi=all_phi[s],
@@ -80,11 +68,12 @@ def plot_multi_seed_results(
         pos_list.append(pos)
         ax3.plot(pos[:, 0], pos[:, 1], alpha=0.35, lw=1.0)
 
-    pos_list = np.asarray(pos_list)
+    pos_list = np.array(pos_list)
     mean_pos = np.mean(pos_list, axis=0)
+
     ax3.plot(mean_pos[:, 0], mean_pos[:, 1], lw=3.0, label="Mean trajectory")
-    ax3.plot(mean_pos[0, 0], mean_pos[0, 1], "o", ms=9, label="Start")
-    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=11, label="End")
+    ax3.plot(mean_pos[0, 0], mean_pos[0, 1], "o", ms=8, label="Start")
+    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=10, label="End")
 
     ax3.set_title(f"PLV-gated Trajectories (gain={base_gain}, min PLV thresh={min_plv_thr})")
     ax3.set_xlabel("X position (arbitrary units)")
@@ -96,18 +85,19 @@ def plot_multi_seed_results(
     fig.suptitle(title, fontsize=16, y=0.98)
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=160, bbox_inches="tight")
-        plt.close(fig)
+    if save_plot:
+        fig.savefig(save_plot, dpi=200, bbox_inches="tight")
     else:
         plt.show()
+
+    plt.close(fig)
 
 
 def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
     order = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
-    print("\n" + "=" * 64)
-    print("Ablation tail summary (last tail_len steps, mean ± std over seeds)")
-    print("-" * 64)
+    print("\n" + "=" * 72)
+    print("Ablation tail summary (last tail steps, mean ± std over seeds)")
+    print("-" * 72)
     for cond in order:
         s = summary.get(cond, {})
         plv_m = s.get("plv_tail_mean", np.nan)
@@ -115,7 +105,7 @@ def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
         corr_m = s.get("corr_tail_mean", np.nan)
         corr_s = s.get("corr_tail_std", np.nan)
         print(f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | corr: {corr_m:>7.4f} ± {corr_s:<7.4f}")
-    print("=" * 64 + "\n")
+    print("=" * 72 + "\n")
 
 
 def plot_ablation_overview(
@@ -123,7 +113,7 @@ def plot_ablation_overview(
     summary: Dict[str, Dict[str, float]],
     n_steps: Optional[int] = None,
     title: str = "Ablation Study Overview (multi-seed)",
-    save_path: Optional[str] = None,
+    save_plot: Optional[str] = None,
 ) -> None:
     conditions = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
     any_cond = conditions[0]
@@ -133,15 +123,11 @@ def plot_ablation_overview(
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
 
-    # Correlation
     for cond in conditions:
         corr = results[cond]["corr"]
         m = np.nanmean(corr, axis=0)
         s = np.nanstd(corr, axis=0)
-        ax1.plot(
-            t, m, lw=2.0,
-            label=f"{cond} (tail {summary[cond]['corr_tail_mean']:.3f} ± {summary[cond]['corr_tail_std']:.3f})"
-        )
+        ax1.plot(t, m, lw=2.0, label=f"{cond} (tail {summary[cond]['corr_tail_mean']:.3f} ± {summary[cond]['corr_tail_std']:.3f})")
         ax1.fill_between(t, m - s, m + s, alpha=0.12)
 
     ax1.set_title("Rolling Pearson correlation (mean ± std)")
@@ -150,15 +136,11 @@ def plot_ablation_overview(
     ax1.grid(True, alpha=0.3)
     ax1.legend(ncol=3, fontsize=9)
 
-    # PLV
     for cond in conditions:
         plv = results[cond]["plv"]
         m = np.nanmean(plv, axis=0)
         s = np.nanstd(plv, axis=0)
-        ax2.plot(
-            t, m, lw=2.0,
-            label=f"{cond} (tail {summary[cond]['plv_tail_mean']:.3f} ± {summary[cond]['plv_tail_std']:.3f})"
-        )
+        ax2.plot(t, m, lw=2.0, label=f"{cond} (tail {summary[cond]['plv_tail_mean']:.3f} ± {summary[cond]['plv_tail_std']:.3f})")
         ax2.fill_between(t, m - s, m + s, alpha=0.12)
 
     ax2.axhline(0.80, ls="--", alpha=0.7, label="High coherence threshold")
@@ -172,10 +154,11 @@ def plot_ablation_overview(
     fig.suptitle(title, fontsize=16, y=0.98)
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=160, bbox_inches="tight")
-        plt.close(fig)
+    if save_plot:
+        fig.savefig(save_plot, dpi=200, bbox_inches="tight")
     else:
         plt.show()
+
+    plt.close(fig)
 
     print_ablation_summary(summary)
