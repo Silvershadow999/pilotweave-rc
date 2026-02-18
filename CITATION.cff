@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use PilotWeave-RC in your research, please cite it as below."
+type: software
+title: "PilotWeave-RC: Pilot-wave surfing on fuzzy dark matter (surrogate simulation)"
+version: 0.1.0
+date-released: 2026-02-18
+authors:
+  - family-names: Drinda
+    given-names: Alexandra-Nicole Anna
+    affiliation: "Independent Researcher / Citizen Science"
+repository-code: "https://github.com/Silvershadow999/pilotweave-rc"
+url: "https://github.com/Silvershadow999/pilotweave-rc"
+license: MIT
+keywords:
+  - physical-reservoir-computing
+  - pilot-wave
+  - fuzzy-dark-matter
+  - metamaterials
+  - spacecraft-navigation
+  - phase-locking-value
+abstract: >
+  PilotWeave-RC is a SciPy-free simulation of a physical reservoir computing fabric
+  that couples sparse cosmic ray pulses with a fuzzy dark matter surrogate wave
+  to study phase coherence (PLV/corr) and PLV-modulated guidance-like trajectories.
+  It explores self-calibrating, ultra-low-energy control signals for satellites
+  and deep-space vehicles.
