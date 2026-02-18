@@ -162,7 +162,7 @@ class ReservoirConfig:
     dtype: str = "float64"  # "float64" or "float32"
 
     # density/curvature diagnostics (simulation-only)
-    # (These DO NOT claim real physics; they are a toy modulation knob.)
+    # (toy modulation knob; no real physics claim)
     log_density: bool = False
     base_density: float = 1.0
     pulse_density_boost: float = 5.0
@@ -171,7 +171,7 @@ class ReservoirConfig:
     fr_power: float = 0.37
     fr_max: int = 6
 
-    # compute matching: optionally force fixed substeps
+    # compute-matching: optionally force fixed substeps
     fixed_substeps: int = 1  # 1 = normal
 
     def as_kwargs(self) -> Dict:
@@ -192,6 +192,7 @@ class AdaptiveGewebeReservoirV3:
     def __init__(self, cfg: ReservoirConfig):
         self.cfg = cfg
         kw = cfg.as_kwargs()
+
         self.n_nodes = int(kw["n_nodes"])
         self.rng = np.random.default_rng(int(kw["seed"]))
         self.dtype = kw["dtype"]
@@ -282,7 +283,6 @@ class AdaptiveGewebeReservoirV3:
         # compute-matched mode: force fixed
         if self.fixed_substeps > 1:
             return int(self.fixed_substeps)
-
         ratio = max(rho_loc / max(self.base_density, 1e-9), 1e-9)
         fr = ratio ** self.fr_power
         n_sub = int(max(1, min(int(round(fr)), self.fr_max)))
@@ -326,8 +326,7 @@ class AdaptiveGewebeReservoirV3:
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Returns (u_hist, y_hist, phi_hist).
-        If cfg.log_density=True, also fills:
-          rho_hist, curvature_hist, substeps_hist
+        If cfg.log_density=True, also fills: rho_hist, curvature_hist, substeps_hist
         """
         self.X_hist = np.zeros((n_steps, self.n_nodes), dtype=self.dtype)
         self.phi_hist = np.zeros(n_steps, dtype=np.float64)
@@ -345,7 +344,6 @@ class AdaptiveGewebeReservoirV3:
 
         for t in range(n_steps):
             phi_dm = self.get_fdm_field(t, fs=fs)
-
             pulse_active = (float(self.rng.random()) < p_pulse)
             u_rad = float(self.rng.normal(0.0, pulse_sigma)) if pulse_active else 0.0
             if persistent_noise:
@@ -435,6 +433,7 @@ def run_multi_seed(
     """
     Returns:
       all_y, all_phi, all_plv, all_corr, all_curvature(optional)
+
     If base_cfg.log_density=False -> curvature returns None.
     """
     all_y, all_phi, all_plv, all_corr = [], [], [], []
@@ -443,6 +442,7 @@ def run_multi_seed(
     for s in range(n_seeds):
         cfg = ReservoirConfig(**{**asdict(base_cfg), "seed": seed_base + s, "dtype": base_cfg.dtype})
         sim = AdaptiveGewebeReservoirV3(cfg)
+
         _, y, phi = sim.run(
             n_steps=n_steps,
             p_pulse=p_pulse,
@@ -460,7 +460,6 @@ def run_multi_seed(
         all_corr.append(corr)
 
         if all_curv is not None:
-            # curvature_hist exists if cfg.log_density=True
             all_curv.append(np.asarray(sim.curvature_hist, dtype=np.float64))
 
     return (
