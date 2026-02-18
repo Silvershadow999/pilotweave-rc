@@ -8,7 +8,7 @@ import numpy as np
 
 
 # ============================================================
-# Utilities: spectral radius, rolling corr, Hilbert/PLV
+# Utilities: spectral radius, rolling corr, Hilbert/PLV (SciPy-free)
 # ============================================================
 def power_iteration_spectral_radius(
     W: np.ndarray,
@@ -18,14 +18,17 @@ def power_iteration_spectral_radius(
     """Approximate spectral radius via power iteration."""
     if rng is None:
         rng = np.random.default_rng(0)
+
     v = rng.normal(size=W.shape[0])
     v /= (np.linalg.norm(v) + 1e-12)
+
     for _ in range(n_iter):
         v = W @ v
         nv = np.linalg.norm(v)
         if nv < 1e-12:
             return 0.0
         v /= nv
+
     wv = W @ v
     lam = float(np.dot(v, wv))
     return float(abs(lam))
@@ -40,6 +43,7 @@ def rolling_corr_fast(a: np.ndarray, b: np.ndarray, win: int) -> np.ndarray:
     b = np.asarray(b, dtype=np.float64)
     n = a.size
     out = np.full(n, np.nan, dtype=np.float64)
+
     if win <= 1 or win > n:
         return out
 
@@ -86,10 +90,10 @@ def hilbert_analytic_signal(x: np.ndarray, detrend: bool = True) -> np.ndarray:
     if n % 2 == 0:
         H[0] = 1.0
         H[n // 2] = 1.0
-        H[1:n // 2] = 2.0
+        H[1 : n // 2] = 2.0
     else:
         H[0] = 1.0
-        H[1:(n + 1) // 2] = 2.0
+        H[1 : (n + 1) // 2] = 2.0
 
     return np.fft.ifft(Xf * H)
 
@@ -121,12 +125,12 @@ def rolling_plv(y: np.ndarray, phi: np.ndarray, win: int, detrend: bool = True) 
     cr = np.cumsum(zr)
     ci = np.cumsum(zi)
 
-    sr = cr[win - 1:] - np.concatenate(([0.0], cr[:-win]))
-    si = ci[win - 1:] - np.concatenate(([0.0], ci[:-win]))
+    sr = cr[win - 1 :] - np.concatenate(([0.0], cr[:-win]))
+    si = ci[win - 1 :] - np.concatenate(([0.0], ci[:-win]))
 
     mr = sr / win
     mi = si / win
-    out[win - 1:] = np.sqrt(mr * mr + mi * mi)
+    out[win - 1 :] = np.sqrt(mr * mr + mi * mi)
     return out
 
 
@@ -135,6 +139,7 @@ def rolling_plv(y: np.ndarray, phi: np.ndarray, win: int, detrend: bool = True) 
 # ============================================================
 @dataclass
 class ReservoirConfig:
+    # core
     n_nodes: int = 300
     rho: float = 0.92
     eta: float = 0.008
@@ -145,7 +150,7 @@ class ReservoirConfig:
     sparsity_thresh: float = 0.085
     mem_clip: float = 1.5
 
-    # Hebbian update shaping
+    # Hebbian shaping
     hebb_baseline: float = 0.10
     hebb_pulse_boost: float = 6.0
 
@@ -158,7 +163,18 @@ class ReservoirConfig:
 
     # RNG + dtype
     seed: int = 42
-    dtype: str = "float64"  # "float64" or "float32"
+    dtype: str = "float64"  # "float32" also allowed
+
+    # --- Density / curvature modulation (simulation-only) ---
+    log_density: bool = False          # if True: store rho/curvature/substeps
+    fixed_substeps: int = 1            # if >1: override density substeps
+    density_alpha: float = 0.37
+    base_density: float = 1.0
+    pulse_density_boost: float = 5.0
+    activity_density_gain: float = 0.10
+    curvature_gain: float = 2.0
+    fr_power: float = 0.37
+    fr_max: float = 6.0
 
     def as_kwargs(self) -> Dict:
         d = asdict(self)
@@ -169,7 +185,11 @@ class ReservoirConfig:
 class AdaptiveGewebeReservoirV3:
     """
     Quasikristallines Reservoir + memristives Gedächtnis (W_mem) + DM-Surrogat.
-    Output y(t) wird ZEITKONSISTENT berechnet: y(t) = W_mem(t)·x(t)
+    Output (zeitkonsistent): y(t) = W_mem(t) · x(t)
+
+    Optional simulation-only extensions:
+      - density-modulated substeps (effective framerate proxy)
+      - curvature factor logging for trajectory modulation
     """
 
     def __init__(self, cfg: ReservoirConfig):
@@ -194,7 +214,18 @@ class AdaptiveGewebeReservoirV3:
         self.dm_boost_steps = int(kw["dm_boost_steps"])
         self.dm_boost_factor = float(kw["dm_boost_factor"])
 
-        # Quasikristalline Kopplung W (aperiodic, sparse)
+        # Density/curvature params
+        self.log_density = bool(kw["log_density"])
+        self.fixed_substeps = int(max(1, kw["fixed_substeps"]))
+        self.density_alpha = float(kw["density_alpha"])
+        self.base_density = float(kw["base_density"])
+        self.pulse_density_boost = float(kw["pulse_density_boost"])
+        self.activity_density_gain = float(kw["activity_density_gain"])
+        self.curvature_gain = float(kw["curvature_gain"])
+        self.fr_power = float(kw["fr_power"])
+        self.fr_max = float(kw["fr_max"])
+
+        # Quasicrystalline sparse symmetric coupling W
         phi = (1.0 + math.sqrt(5.0)) / 2.0
         i = np.arange(self.n_nodes)[:, None]
         j = np.arange(self.n_nodes)[None, :]
@@ -211,7 +242,7 @@ class AdaptiveGewebeReservoirV3:
             W *= (self.rho / sr)
         self.W = W
 
-        # States
+        # State
         self.x = np.zeros(self.n_nodes, dtype=self.dtype)
         self.W_mem = np.zeros(self.n_nodes, dtype=self.dtype)
 
@@ -221,11 +252,13 @@ class AdaptiveGewebeReservoirV3:
         self.u_hist: Optional[np.ndarray] = None
         self.y_hist: Optional[np.ndarray] = None
 
+        # Optional logs
+        self.rho_hist: Optional[np.ndarray] = None
+        self.curvature_hist: Optional[np.ndarray] = None
+        self.fr_hist: Optional[np.ndarray] = None
+
     def get_fdm_field(self, t: int, fs: float = 1000.0) -> float:
-        """
-        FDM surrogate: sum of sinusoids + noise.
-        Frequencies are in Hz; time step is 1/fs seconds.
-        """
+        """FDM surrogate: sum of sinusoids + noise."""
         tt = t / fs
         base = math.sin(2 * math.pi * 0.963 * tt)
         harm = 0.4 * math.sin(2 * math.pi * 2.47 * tt)
@@ -233,7 +266,28 @@ class AdaptiveGewebeReservoirV3:
         noise = 0.08 * float(self.rng.normal())
         return float(base + harm + slow + noise)
 
-    def step(self, u_rad: float, phi_dm: float, t: int) -> None:
+    # ---------- density helpers ----------
+    def compute_local_density(self, pulse_active: bool) -> float:
+        rho_loc = float(self.base_density)
+        if pulse_active:
+            rho_loc += float(self.pulse_density_boost)
+
+        act = float(np.linalg.norm(self.x) / (math.sqrt(self.n_nodes) + 1e-12))
+        rho_loc += float(self.activity_density_gain) * act
+        return max(rho_loc, 1e-9)
+
+    def effective_framerate(self, rho_loc: float) -> float:
+        ratio = max(rho_loc / max(self.base_density, 1e-9), 1e-9)
+        fr = ratio ** float(self.fr_power)
+        fr = max(1.0, min(float(fr), float(self.fr_max)))
+        return float(fr)
+
+    def curvature_factor(self, rho_loc: float) -> float:
+        ratio = max(rho_loc / max(self.base_density, 1e-9), 0.0)
+        return float(1.0 + float(self.curvature_gain) * max(0.0, ratio - 1.0))
+
+    # ---------- core update ----------
+    def _core_update(self, u_rad: float, phi_dm: float, t: int) -> None:
         feedback = self.beta * (self.W_mem * self.x)
 
         effective_alpha = self.dm_coupling
@@ -250,6 +304,21 @@ class AdaptiveGewebeReservoirV3:
         self.W_mem *= (1.0 - self.lambda_forget)
         np.clip(self.W_mem, -self.mem_clip, self.mem_clip, out=self.W_mem)
 
+    def step(self, u_rad: float, phi_dm: float, t: int, pulse_active: bool) -> Tuple[float, float, float]:
+        rho_loc = self.compute_local_density(pulse_active)
+        fr = self.effective_framerate(rho_loc)
+        curv = self.curvature_factor(rho_loc)
+
+        if self.fixed_substeps > 1:
+            n_sub = int(min(self.fixed_substeps, int(self.fr_max)))
+        else:
+            n_sub = int(max(1, min(int(round(fr)), int(self.fr_max))))
+
+        for _ in range(n_sub):
+            self._core_update(u_rad, phi_dm, t)
+
+        return float(rho_loc), float(curv), float(n_sub)
+
     def run(
         self,
         n_steps: int,
@@ -257,33 +326,51 @@ class AdaptiveGewebeReservoirV3:
         pulse_sigma: float = 0.12,
         fs: float = 1000.0,
         persistent_noise: bool = True,
+        log_density: Optional[bool] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Returns (u_hist, y_hist, phi_hist).
-        """
+        """Returns (u_hist, y_hist, phi_hist)."""
+        if log_density is None:
+            log_density = self.log_density
+
         self.X_hist = np.zeros((n_steps, self.n_nodes), dtype=self.dtype)
         self.phi_hist = np.zeros(n_steps, dtype=np.float64)
         self.u_hist = np.zeros(n_steps, dtype=np.float64)
         self.y_hist = np.zeros(n_steps, dtype=np.float64)
 
+        if log_density:
+            self.rho_hist = np.zeros(n_steps, dtype=np.float64)
+            self.curvature_hist = np.zeros(n_steps, dtype=np.float64)
+            self.fr_hist = np.zeros(n_steps, dtype=np.float64)
+        else:
+            self.rho_hist = None
+            self.curvature_hist = None
+            self.fr_hist = None
+
         for t in range(n_steps):
             phi_dm = self.get_fdm_field(t, fs=fs)
-            u_rad = float(self.rng.normal(0.0, pulse_sigma)) if (float(self.rng.random()) < p_pulse) else 0.0
+
+            pulse_active = float(self.rng.random()) < p_pulse
+            u_rad = float(self.rng.normal(0.0, pulse_sigma)) if pulse_active else 0.0
             if persistent_noise:
                 u_rad += float(self.rng.normal(0.0, self.persistent_noise_sigma))
 
-            self.step(u_rad, phi_dm, t)
+            rho_loc, curv, fr = self.step(u_rad, phi_dm, t, pulse_active=pulse_active)
 
             self.X_hist[t] = self.x
             self.phi_hist[t] = phi_dm
             self.u_hist[t] = u_rad
             self.y_hist[t] = float(np.dot(self.W_mem, self.x))
 
+            if log_density and self.rho_hist is not None:
+                self.rho_hist[t] = rho_loc
+                self.curvature_hist[t] = curv
+                self.fr_hist[t] = fr
+
         return self.u_hist, self.y_hist, self.phi_hist
 
 
 # ============================================================
-# Trajectory (PLV-modulated propulsion)
+# Trajectory (PLV-modulated)
 # ============================================================
 def simulate_plv_modulated_trajectory(
     y: np.ndarray,
@@ -292,14 +379,23 @@ def simulate_plv_modulated_trajectory(
     base_gain: float = 0.15,
     dt: float = 0.01,
     min_plv_thr: float = 0.4,
+    curvature: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     2D guidance: thrust direction follows DM phase; thrust magnitude scales with PLV gate.
+    If curvature is provided (length n), thrust is additionally multiplied by curvature[t].
     """
     y = np.asarray(y, dtype=np.float64)
     phi = np.asarray(phi, dtype=np.float64)
     plv = np.asarray(plv, dtype=np.float64)
     n = len(y)
+
+    if curvature is None:
+        curvature = np.ones(n, dtype=np.float64)
+    else:
+        curvature = np.asarray(curvature, dtype=np.float64)
+        if curvature.shape[0] != n:
+            raise ValueError("curvature must have same length as y/phi/plv")
 
     pos = np.zeros((n, 2), dtype=np.float64)
     vel = np.zeros((n, 2), dtype=np.float64)
@@ -308,12 +404,13 @@ def simulate_plv_modulated_trajectory(
     phase_phi = np.unwrap(np.angle(hilbert_analytic_signal(phi, detrend=True)))
 
     for t in range(1, n):
-        p = plv[t]
-        if not np.isfinite(p):
-            p = 0.0
-        g = base_gain * max(0.0, p - min_plv_thr) / (1.0 - min_plv_thr + 1e-12)
+        p = float(plv[t]) if np.isfinite(plv[t]) else 0.0
+        gate = max(0.0, p - min_plv_thr) / (1.0 - min_plv_thr + 1e-12)
+        g = base_gain * gate
+
         thrust_dir = np.array([math.cos(phase_phi[t]), math.sin(phase_phi[t])], dtype=np.float64)
-        thrust = g * y[t] * thrust_dir
+        thrust = (g * y[t] * float(curvature[t])) * thrust_dir
+
         vel[t] = vel[t - 1] + thrust * dt
         pos[t] = pos[t - 1] + vel[t] * dt
 
@@ -321,7 +418,7 @@ def simulate_plv_modulated_trajectory(
 
 
 # ============================================================
-# Experiment runners (multi-seed + ablation)
+# Experiment runners
 # ============================================================
 def run_multi_seed(
     base_cfg: ReservoirConfig,
@@ -334,21 +431,47 @@ def run_multi_seed(
     pulse_sigma: float = 0.12,
     persistent_noise: bool = True,
     detrend_plv: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    all_y, all_phi, all_plv, all_corr = [], [], [], []
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Returns:
+      all_y, all_phi, all_plv, all_corr, all_curvature
+    all_curvature is ones if log_density is False.
+    """
+    all_y, all_phi, all_plv, all_corr, all_curv = [], [], [], [], []
+
     for s in range(n_seeds):
-        cfg = ReservoirConfig(**{**asdict(base_cfg), "seed": seed_base + s, "dtype": base_cfg.dtype})
+        cfg_dict = asdict(base_cfg)
+        cfg_dict["seed"] = int(seed_base + s)
+        cfg = ReservoirConfig(**cfg_dict)
+
         sim = AdaptiveGewebeReservoirV3(cfg)
-        _, y, phi = sim.run(n_steps, p_pulse=p_pulse, pulse_sigma=pulse_sigma, fs=fs, persistent_noise=persistent_noise)
+        _, y, phi = sim.run(
+            n_steps,
+            p_pulse=p_pulse,
+            pulse_sigma=pulse_sigma,
+            fs=fs,
+            persistent_noise=persistent_noise,
+            log_density=cfg.log_density,
+        )
+
         plv = rolling_plv(y, phi, win=window, detrend=detrend_plv)
         corr = rolling_corr_fast(y, phi, win=window)
+
+        curv = sim.curvature_hist if (cfg.log_density and sim.curvature_hist is not None) else np.ones_like(y)
 
         all_y.append(y)
         all_phi.append(phi)
         all_plv.append(plv)
         all_corr.append(corr)
+        all_curv.append(curv)
 
-    return (np.asarray(all_y), np.asarray(all_phi), np.asarray(all_plv), np.asarray(all_corr))
+    return (
+        np.asarray(all_y),
+        np.asarray(all_phi),
+        np.asarray(all_plv),
+        np.asarray(all_corr),
+        np.asarray(all_curv),
+    )
 
 
 def run_condition(
@@ -366,16 +489,28 @@ def run_condition(
     cfg_dict = asdict(base_cfg)
     cfg_dict["seed"] = int(seed)
 
+    # ablations
     if condition == "dm0":
         cfg_dict["dm_coupling"] = 0.0
     elif condition == "boost0":
         cfg_dict["hebb_pulse_boost"] = 0.0
 
+    # keep ablation clean: turn density logging off
+    cfg_dict["log_density"] = False
+    cfg_dict["fixed_substeps"] = 1
+
     cfg = ReservoirConfig(**cfg_dict)
     sim = AdaptiveGewebeReservoirV3(cfg)
 
     p = 0.0 if condition == "phi_only" else p_pulse
-    _, y, phi = sim.run(n_steps, p_pulse=p, pulse_sigma=pulse_sigma, fs=fs, persistent_noise=persistent_noise)
+    _, y, phi = sim.run(
+        n_steps,
+        p_pulse=p,
+        pulse_sigma=pulse_sigma,
+        fs=fs,
+        persistent_noise=persistent_noise,
+        log_density=False,
+    )
 
     if condition == "shuffle_phi":
         rng = np.random.default_rng(seed + 999)
