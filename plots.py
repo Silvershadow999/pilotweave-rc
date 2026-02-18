@@ -5,7 +5,7 @@ from typing import Dict, Optional
 import numpy as np
 import matplotlib
 
-# Headless-safe backend if you run on servers / CI
+# Headless-safe backend (CI/Server)
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -31,7 +31,9 @@ def plot_multi_seed_results(
       - Mean ± std of rolling Pearson correlation
       - Mean ± std of PLV
       - Spaghetti + mean trajectory (PLV-gated)
+
     If all_curvature is provided, it modulates thrust.
+
     If save_path is provided, saves figure and closes it (headless-safe).
     """
     if n_steps is None:
@@ -120,7 +122,9 @@ def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
         plv_s = s.get("plv_tail_std", np.nan)
         corr_m = s.get("corr_tail_mean", np.nan)
         corr_s = s.get("corr_tail_std", np.nan)
-        print(f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | corr: {corr_m:>7.4f} ± {corr_s:<7.4f}")
+        print(
+            f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | corr: {corr_m:>7.4f} ± {corr_s:<7.4f}"
+        )
     print("=" * 64 + "\n")
 
 
