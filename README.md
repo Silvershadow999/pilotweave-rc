@@ -71,29 +71,44 @@ python main.py multi-seed --n-seeds 10 --n-steps 3300
 # Ablation study (default: 20 seeds per condition, 3300 steps)
 python main.py ablation --n-seeds 20 --n-steps 3300- Configurable via dataclass (`ReservoirConfig`)  
 - Multi-seed simulations with mean ± std statistics  
-- Ablation studies (dm_coupling=0, hebb_pulse_boost=0, shuffle φ, φ-only)  
-- PLV-gated 2D trajectories (thrust magnitude scales with instantaneous coherence)  
-- CLI interface (`main.py`) with subcommands: `multi-seed` & `ablation`
+- Ablation studies (dm_coupling=0, hebb_pulse_boost=0, shuffle φ, φ-# PilotWeave-RC
+**Pilot-wave surfing on fuzzy dark matter (surrogate simulation)**
 
-## How it works (one paragraph)
+A SciPy-free physical reservoir computing model that leverages sparse cosmic ray pulses and a fuzzy dark matter *surrogate* wave to study strong phase coherence (rolling Pearson correlation + PLV) and PLV-modulated guidance-like trajectories.
 
-1. Reservoir state `x(t)` evolves under quasicrystalline coupling `W` + event-driven input pulses.  
-2. Memristive-like weight vector `W_mem(t)` is updated via pulse-boosted Hebbian plasticity.  
-3. Readout is computed time-consistently: `y(t) = W_mem(t) · x(t)`.  
-4. Phase-locking between `y(t)` and the DM-surrogate wave `φ(t)` is quantified via rolling PLV.  
-5. A 2D "guidance-like" trajectory applies thrust proportional to `y(t)` only when PLV exceeds a threshold (`min_plv_thr`).
+**Author:** Alexandra-Nicole Anna Drinda (Silvershadow999)  
+**License:** MIT (see [LICENSE](LICENSE))
 
-## Quick Start
+> **Note / Disclaimer**
+> This repository is a **computational simulation / toy model** exploring signal coherence and guidance-style control signals in a physical reservoir computing context.
+> It does **not** claim experimentally validated propulsion, verified coupling to dark matter, or any real-world physical effect beyond the simulated surrogate model.
+
+---
+
+## What’s inside
+
+PilotWeave-RC simulates an adaptive “fabric” (reservoir) that:
+
+- Uses a **quasicrystalline, sparse coupling matrix** for robust high-capacity dynamics
+- Learns via **memristive / ferroelectric-style Hebbian plasticity** (pulse-boosted by sparse “cosmic ray” events)
+- Keeps the readout **time-consistent**: `y(t) = W_mem(t) · x(t)`
+- Couples to a global **fuzzy-DM surrogate wave** `φ(t)`
+- Measures coherence via:
+  - rolling Pearson correlation `corr(y, φ)`
+  - rolling **PLV** (Phase Locking Value) using a SciPy-free FFT-Hilbert analytic signal
+- Generates **guidance-like 2D trajectories** only when PLV is high (**PLV gate**)
+
+### Optional “density/curvature” extension (simulation-only)
+Some branches/variants add a “density” proxy ρ(t) from pulses + reservoir activity and use it to:
+- modulate internal substeps (“effective framerate”)
+- modulate a “curvature factor” that scales thrust
+This is explicitly **simulation-only** and intended as an exploratory knob.
+
+---
+
+## Install
 
 ```bash
 git clone https://github.com/Silvershadow999/pilotweave-rc.git
 cd pilotweave-rc
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run baseline multi-seed (10 seeds, 3300 steps)
-python main.py multi-seed --n-seeds 10 --n-steps 3300
-
-# Run ablation study (20 seeds, 3300 steps)
-python main.py ablation --n-seeds 20 --n-steps 3300
