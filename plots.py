@@ -13,6 +13,7 @@ def plot_multi_seed_results(
     all_phi: np.ndarray,
     all_plv: np.ndarray,
     all_corr: np.ndarray,
+    all_curvature: Optional[np.ndarray] = None,
     n_steps: Optional[int] = None,
     base_gain: float = 0.15,
     dt: float = 0.01,
@@ -25,7 +26,8 @@ def plot_multi_seed_results(
     Visualizes multi-seed results:
       - Mean ± std of rolling Pearson correlation
       - Mean ± std of PLV
-      - Trajectories (spaghetti + mean)
+      - Trajectories (spaghetti + mean), optionally curvature-modulated
+    If save_path is set: saves PNG and closes figure (headless-friendly).
     """
     if n_steps is None:
         n_steps = all_y.shape[1]
@@ -34,7 +36,7 @@ def plot_multi_seed_results(
     fig = plt.figure(figsize=figsize)
     grid = plt.GridSpec(3, 2, wspace=0.30, hspace=0.40)
 
-    # 1) Rolling correlation
+    # 1) Rolling correlation (mean ± std)
     ax1 = fig.add_subplot(grid[0, 0])
     mean_corr = np.nanmean(all_corr, axis=0)
     std_corr = np.nanstd(all_corr, axis=0)
@@ -46,7 +48,7 @@ def plot_multi_seed_results(
     ax1.grid(True, alpha=0.25)
     ax1.legend(loc="lower right")
 
-    # 2) PLV
+    # 2) PLV (mean ± std)
     ax2 = fig.add_subplot(grid[0, 1])
     mean_plv = np.nanmean(all_plv, axis=0)
     std_plv = np.nanstd(all_plv, axis=0)
@@ -63,6 +65,9 @@ def plot_multi_seed_results(
     ax3 = fig.add_subplot(grid[1:, :])
     pos_list = []
     for s in range(all_y.shape[0]):
+        curvature = None
+        if all_curvature is not None:
+            curvature = all_curvature[s]
         pos = simulate_plv_modulated_trajectory(
             y=all_y[s],
             phi=all_phi[s],
@@ -70,20 +75,20 @@ def plot_multi_seed_results(
             base_gain=base_gain,
             dt=dt,
             min_plv_thr=min_plv_thr,
+            curvature=curvature,
         )
         pos_list.append(pos)
         ax3.plot(pos[:, 0], pos[:, 1], alpha=0.35, lw=1.0)
 
-    pos_list = np.asarray(pos_list, dtype=np.float64)
+    pos_list = np.asarray(pos_list)
     mean_pos = np.mean(pos_list, axis=0)
-
     ax3.plot(mean_pos[:, 0], mean_pos[:, 1], lw=3.0, label="Mean trajectory")
     ax3.plot(mean_pos[0, 0], mean_pos[0, 1], "o", ms=9, label="Start")
-    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=10, label="End")
+    ax3.plot(mean_pos[-1, 0], mean_pos[-1, 1], "x", ms=11, label="End")
 
-    ax3.set_title(f"PLV-gated Trajectories (gain={base_gain}, min PLV={min_plv_thr})")
-    ax3.set_xlabel("X position (arb. units)")
-    ax3.set_ylabel("Y position (arb. units)")
+    ax3.set_title(f"PLV-gated Trajectories (gain={base_gain}, min PLV thresh={min_plv_thr})")
+    ax3.set_xlabel("X position (arbitrary units)")
+    ax3.set_ylabel("Y position (arbitrary units)")
     ax3.grid(True, which="both", linestyle=":", alpha=0.4)
     ax3.axis("equal")
     ax3.legend(loc="best")
@@ -93,14 +98,16 @@ def plot_multi_seed_results(
 
     if save_path:
         plt.savefig(save_path, dpi=160, bbox_inches="tight")
-    plt.show()
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
     order = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
-    print("\n" + "=" * 68)
+    print("\n" + "=" * 64)
     print("Ablation tail summary (last tail_len steps, mean ± std over seeds)")
-    print("-" * 68)
+    print("-" * 64)
     for cond in order:
         s = summary.get(cond, {})
         plv_m = s.get("plv_tail_mean", np.nan)
@@ -108,7 +115,7 @@ def print_ablation_summary(summary: Dict[str, Dict[str, float]]) -> None:
         corr_m = s.get("corr_tail_mean", np.nan)
         corr_s = s.get("corr_tail_std", np.nan)
         print(f"{cond:>12} | PLV: {plv_m:>7.4f} ± {plv_s:<7.4f} | corr: {corr_m:>7.4f} ± {corr_s:<7.4f}")
-    print("=" * 68 + "\n")
+    print("=" * 64 + "\n")
 
 
 def plot_ablation_overview(
@@ -118,9 +125,6 @@ def plot_ablation_overview(
     title: str = "Ablation Study Overview (multi-seed)",
     save_path: Optional[str] = None,
 ) -> None:
-    """
-    Plots mean ± std of corr and PLV for all ablation conditions.
-    """
     conditions = ["baseline", "shuffle_phi", "dm0", "boost0", "phi_only"]
     any_cond = conditions[0]
     if n_steps is None:
@@ -134,21 +138,27 @@ def plot_ablation_overview(
         corr = results[cond]["corr"]
         m = np.nanmean(corr, axis=0)
         s = np.nanstd(corr, axis=0)
-        ax1.plot(t, m, lw=2.0, label=f"{cond} (tail {summary[cond]['corr_tail_mean']:.3f}±{summary[cond]['corr_tail_std']:.3f})")
+        ax1.plot(
+            t, m, lw=2.0,
+            label=f"{cond} (tail {summary[cond]['corr_tail_mean']:.3f} ± {summary[cond]['corr_tail_std']:.3f})"
+        )
         ax1.fill_between(t, m - s, m + s, alpha=0.12)
 
     ax1.set_title("Rolling Pearson correlation (mean ± std)")
     ax1.set_ylabel("Correlation")
     ax1.set_ylim(-0.5, 1.1)
     ax1.grid(True, alpha=0.3)
-    ax1.legend(ncol=2, fontsize=9)
+    ax1.legend(ncol=3, fontsize=9)
 
     # PLV
     for cond in conditions:
         plv = results[cond]["plv"]
         m = np.nanmean(plv, axis=0)
         s = np.nanstd(plv, axis=0)
-        ax2.plot(t, m, lw=2.0, label=f"{cond} (tail {summary[cond]['plv_tail_mean']:.3f}±{summary[cond]['plv_tail_std']:.3f})")
+        ax2.plot(
+            t, m, lw=2.0,
+            label=f"{cond} (tail {summary[cond]['plv_tail_mean']:.3f} ± {summary[cond]['plv_tail_std']:.3f})"
+        )
         ax2.fill_between(t, m - s, m + s, alpha=0.12)
 
     ax2.axhline(0.80, ls="--", alpha=0.7, label="High coherence threshold")
@@ -157,13 +167,15 @@ def plot_ablation_overview(
     ax2.set_ylim(0.0, 1.05)
     ax2.grid(True, alpha=0.3)
     ax2.set_xlabel("Time steps")
-    ax2.legend(ncol=2, fontsize=9)
+    ax2.legend(ncol=3, fontsize=9)
 
     fig.suptitle(title, fontsize=16, y=0.98)
     plt.tight_layout()
 
     if save_path:
         plt.savefig(save_path, dpi=160, bbox_inches="tight")
-    plt.show()
+        plt.close(fig)
+    else:
+        plt.show()
 
     print_ablation_summary(summary)
